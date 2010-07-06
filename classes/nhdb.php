@@ -306,7 +306,7 @@ abstract class nhdb {
 			}
 			*/
 			//tnh::lap("before prepare_translations");
-			$this->prepare_translations();
+			//$this->prepare_translations();
 			//tnh::lap("after prepare_translations");
 
 			return true;
@@ -355,14 +355,7 @@ abstract class nhdb {
 				$this->deleted_by = $deleter > 0 ? $deleter : $tnh->userObj->id;
 				$this->deleted_on = 'now()';
 				$this->save();
-				// send message about deletion:
-				$deletionPM = new pms(array('sender_user_id' => $tnh->userObj->id,
-											'recipient_user_id' => $this->creator()->id,
-											'subject' => _("Content Deleted"),
-											'message' => sprintf(_("I have deleted some content that you posted. Here is why:\n\n%s"), $reason)
-									 ));
-				er("pm:" . print_r($deletionPM,true));
-				$deletionPM->send();
+				
 			} else {
 				$sql = "delete from " . $this->table() . " where id = " . $this->id;
 				$res = tep_db_query($sql);
@@ -370,7 +363,7 @@ abstract class nhdb {
 			if ($GLOBALS['USE_MEMCACHED'] === true) {
 				try {
 					$memcache->delete($klass . '#' . $this->id);
-				} catch (MemCachedException $me) {}
+				} catch (Exception $me) {}
 			}
 			$this->data = array();
 			return true;
@@ -463,7 +456,7 @@ abstract class nhdb {
 		$klass = get_class($this);
 		$foreign_class = $klass::$fks_classes[$fk_name];
 		if (!$foreign_class) {
-			throw new TNHException("Could not find class for foreign key $fk_name");
+			throw new Exception("Could not find class for foreign key $fk_name");
 		}
 		$obj = $foreign_class::load($this->$fk_name);
 		return $obj;
@@ -582,81 +575,6 @@ abstract class nhdb {
 	}
 
 
-	/* Sync Functions - Not ready for OSS yet */
-
-
-	public static function sync($lastSyncTimeServer, $offset, $userObj, $devicePayload = array(), $predicate = '', $sql = '') {
-		/*
-		 server = device + offset;
-		 device = server - offset
-		*/
-		$klass = get_called_class();
-		$changedDevObjs = $deletedDevObjs = $newDevObjs = array();
-		foreach ($devicePayload as $deviceObject) {
-			if ($deviceObject->deleted == 1) {
-				$deletedDevObjs[] = $deviceObject;
-			} elseif (!$deviceObject->id) {
-				$newDevObjs[] = $deviceObject;
-			} else {
-				// the rest we assume are changed
-				$changedDevObjs[] = $deviceObject;
-			}
-		}
-		$klass = get_called_class();
-
-
-		/* apply deletions */
-		foreach ($deletedDevObjs as $deletedDevObj) {
-			$deletedCastObj = new $klass(tnh::objectToArray($deletedDevObj));
-			er("cast object: " . print_r($deletedCastObj,true));
-			if ($userObj->can_delete($deletedCastObj)) {
-				$deletedCastObj->delete($userObj->id, "deleted on mobile device");
-			}
-		}
-		unset($deletedDevObjs, $deletedCastObj, $deletedDevObj);
-		/* apply changes */
-		foreach ($changedDevObjs as $changedDevObj) {
-			$serverComparisonObj = $klass::load($changedDevObj->id);
-			if ($userObj->can_change($serverComparisonObj)) {
-				if ($changedDevObj->modified_on >= (strtotime($serverComparisonObj->modified_on) - $offset)) {
-					$changedCastObj = new $klass(tnh::objectToArray($changedDevObj));
-					$changedCastObj->save();
-				}
-			} else {
-				er(sprintf("user %s not allowed to edit object:", $userObj->username) . print_r($serverComparisonObj,true));
-			}
-		}
-		unset($changedDevObjs, $changedDevObj, $serverComparisonObj);
-
-		/* add new objects */
-		if ($userObj->can_create($klass)) {
-			foreach ($newDevObjs as $newDevObj) {
-				$newObj = new $klass(tnh::objectToArray($newDevObj));
-				$newObj->created_on = $newObj->modified_on = date('Y-m-d H:i:s', $newDevObj->created_on);
-				if ($newObj->save() !== true) {
-					er("error while saving new $klass from device\n");
-				}
-			}
-		}
-		unset($newDevObjs, $newDevObj, $newObj);
-
-		/* get objects to return */
-		if (!$sql) {
-			$sql = sprintf("select id from %s where %s >= '%s'", $klass::$table, in_array('modifed_on', $klass::$fields) ? 'modified_on' : 'created_on', date('Y-m-d H:i:s', $lastSyncTimeServer));
-			if ($predicate) {
-				$sql .= " and $predicate";
-			}
-		}
-		er("sql: $sql\n");
-		$res = tep_db_query($sql);
-		$returnObjs = array();
-		while ($row = tep_db_fetch_array($res)) {
-			$returnObjs[] = $klass::load($row['id'])->getData();
-		}
-		unset($res, $sql, $row);
-		return $returnObjs;
-
-	}
 
 
 
