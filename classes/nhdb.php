@@ -22,7 +22,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
- * 
+ *
  */
 
 abstract class nhdb {
@@ -30,33 +30,38 @@ abstract class nhdb {
 	protected static $fields = array();
 	static $table;
 	protected static $nullable = array();
-	private $creator;
+	protected $creator;
 	private $updater;
 	protected $translated_fields = array();
 	public $retrieved = false;
 	static $klass;
 	public static $datefields = array('created_on', 'updated_on', 'created', 'date', 'modified_on');
-
+	const noCache = false;
 
 	function __construct($args = array()) {
-		
+
 		if ($args) {
 			foreach ($args as $k => $v) {
 				$key = strtolower($k);
 				$this->$key = $v;
 			}
 		}
-		
+
 	}
 
 
+	/**
+	 * Static method to return an object. If the object is cacheable and cached it is returned from cache.
+	 * @param int $id
+	 * @return Ambiguous|boolean
+	 */
 	public static function load($id) {
-		
+
 		global $memcache;
-		
+
 		$klass = get_called_class();
 
-		
+
 		if ($GLOBALS['USE_MEMCACHED'] === true) {
 
 			if ($object = $memcache->get($klass . '#' . $id)) {
@@ -71,7 +76,7 @@ abstract class nhdb {
 			}
 		} else {
 			$object = new $klass(array('id' => $id));
-			
+
 			if ($object->retrieve()) {
 				return $object;
 			}
@@ -80,20 +85,25 @@ abstract class nhdb {
 	}
 
 
+	/**
+	 * Magic getter function. Returns instance variables or translated versions of them.
+	 * @param string $member
+	 * @return Ambiguous|boolean|Ambigous <string, multitype:>|Ambiguous
+	 */
 	public function __get($member) {
 		$klass = get_class($this);
 		if (in_array($member, array_keys($this->translated_fields))) {
 
 			if (isset($this->translated_fields[$member]) && $value = $this->translated_fields[$member]->get($GLOBALS['lang'])) {
-				
+
 				return $value;
 			} elseif ((in_array($member, $klass::$fields) && isset($this->data[$member])) ||
-					  (in_array($member . '_en_US', $klass::$fields) && isset($this->data[$member . '_en_us']))) {
-				
+					  (in_array($member . '_en_us', $klass::$fields) && isset($this->data[$member . '_en_us']))) {
+
 				$value = '';
 				if (in_array($member, $klass::$fields) && isset($this->data[$member])) {
 					$value = $this->data[$member];
-				} elseif (in_array($member . '_en_US', $klass::$fields) && isset($this->data[$member . '_en_us'])) {
+				} elseif (in_array($member . '_en_us', $klass::$fields) && isset($this->data[$member . '_en_us'])) {
 					$value = $this->data[$member . '_en_us'];
 				} else {
 					return false;
@@ -128,6 +138,11 @@ abstract class nhdb {
 		return false;
 	}
 
+	/**
+	 * Magic setter function
+	 * @param string $member
+	 * @param mixed $value
+	 */
 	public function __set($member, $value) {
 		$klass = get_class($this);
 		if (in_array($member, $klass::$fields)) {
@@ -150,12 +165,22 @@ abstract class nhdb {
 		}
 	}
 
-	public function save($cache = true) {
-
+	/**
+	 * Save function. Updates the cache if necessary. Also fills in meta data about times, users and locations if necessary
+	 * @param boolean $cache
+	 * @param integer $city_id
+	 * @param integer $site_id
+	 * @param integer $country_id
+	 * @return boolean
+	 */
+	public function save($cache = true, $city_id = null, $site_id = null, $country_id = null) {
+		
 		global $tnh, $memcache;
 		// validate
 		$klass = get_class($this);
-		er("klass is $klass");
+		if ($klass::noCache === true) {
+			$cache = true;
+		}
 		$res = $this->validate();
 		if ($res !== true) {
 			return $res;
@@ -174,23 +199,62 @@ abstract class nhdb {
 		}
 
 		if ( in_array('modified_on', $klass::$fields) ) {
-			
+
 			$this->modified_on = 'now()';
-			
+
 		}
 		
+		if ( in_array('date', $klass::$fields) ) {
+
+			$this->date = 'now()';
+
+		}
+
 		if ( in_array('updated_on', $klass::$fields) ) {
 
 			$this->updated_on = 'now()';
 		} else if (in_array('updated', $klass::$fields) && (!$this->updated || $this->updated == 'null')) {
 			$this->updated = 'now()';
 		}
-		
+
 		if ( in_array('updated_by', $klass::$fields) ) {
 			if ($tnh->userObj->id) {
 				$this->updated_by = $tnh->userObj->id;
 			} else {
 				$this->updated_by = 0;
+			}
+		}
+	
+		if (in_array('city_id', $klass::$fields)) {
+			if ($city_id) {
+				$this->city_id = $city_id;
+			} 
+			if (!$this->city_id) {
+				$this->city_id = $GLOBALS['city_id'];
+			}
+		}
+	
+		if (in_array('site_id', $klass::$fields) && !$this->site_id) {
+			if ($site_id) {
+				$this->site_id = $site_id;
+			} else {
+				if (method_exists($this, 'city')) {
+					$this->site_id = $this->city()->site()->id;
+				} else {
+					$this->site_id = $GLOBALS['site_id'];
+				}
+			}
+		}
+		
+		if (in_array('country_id', $klass::$fields) && !$this->country_id) {
+			if ($country_id) {
+				$this->country_id = $country_id;
+			} else {
+				if (method_exists($this, 'site')) {
+					$this->country_id = $this->site()->country_id;
+				} else {
+					$this->country_id = $GLOBALS['country_id'];
+				}
 			}
 		}
 		
@@ -206,7 +270,7 @@ abstract class nhdb {
 				unset($this->data['created']);
 			}
 
-		
+
 
 
 			if ( $res = tep_db_perform($this->table(), $this->data, 'update', " id = {$this->id}") ) {
@@ -217,7 +281,7 @@ abstract class nhdb {
 				}
 				$this->retrieve();
 
-	
+
 				if ($GLOBALS['USE_MEMCACHED'] === true && $cache === true) {
 					try {
 
@@ -273,14 +337,18 @@ abstract class nhdb {
 			}
 		}
 	}
-	
+
+	/**
+	 * Pull from the database. Does some timezone magic. Also gets translations.
+	 * @return boolean
+	 */
 	public function retrieve() {
 		$klass = get_class($this);
 		$fields = $klass::$fields;
 
 		if ($current_date_fields = array_intersect($klass::$datefields, $fields)) {
 			foreach ($current_date_fields as $cdf) {
-				$fields[$cdf] = "convert_tz(" . $cdf . ", 'SYSTEM', '" . TIME_ZONE  . "') as $cdf";
+				$fields[$cdf] = "convert_tz(" . $cdf . ", 'SYSTEM', '" . $GLOBALS['TIME_ZONE']  . "') as $cdf";
 				//er("field in retrieve: " . $fields[$cdf] . "\n", 3, er);
 			}
 		}
@@ -293,6 +361,8 @@ abstract class nhdb {
 				foreach ($row as $k => $v) {
 					$this->data[strtolower($k)] = $v;
 				}
+			} else {
+				return false;
 			}
 			//echo number_format(memory_get_usage()) . "(after assigning row to data)\n";
 			tep_db_free_result($res);
@@ -306,7 +376,7 @@ abstract class nhdb {
 			}
 			*/
 			//tnh::lap("before prepare_translations");
-			//$this->prepare_translations();
+			$this->prepare_translations();
 			//tnh::lap("after prepare_translations");
 
 			return true;
@@ -315,7 +385,10 @@ abstract class nhdb {
 		return false;
 	}
 
-	/* use this to clear the memcached cache */
+	
+	/**
+	 * Clears an object from cache
+	 */
 	public function unload() {
 		global $memcache;
 		$klass = get_class($this);
@@ -329,6 +402,12 @@ abstract class nhdb {
 		}
 	}
 
+	
+	/**
+	 * Replaces a cached object
+	 * @param object $object
+	 * @return boolean
+	 */
 	public function cache_replace($object) {
 		if ($GLOBALS['USE_MEMCACHED'] === true) {
 			global $memcache;
@@ -341,30 +420,60 @@ abstract class nhdb {
 		return true;
 	}
 
-	function delete($deleter = 0, $reason = '') {
+	/**
+	 * Soft, or hard deletes an object.
+	 * @param integer $deleter
+	 * @param string $reason
+	 * @param boolean $sendPM
+	 * @return boolean
+	 */
+	function delete($deleter = 0, $reason = '', $sendPM = true) {
 		$klass = get_class($this);
 		global $memcache, $tnh;
-		er("in delete");
+		
 		if ($this->id) {
 
-			
+			er("in delete");
 			if (in_array('deleted',$klass::$fields)) {
-				
+
 				$this->deleted = '1';
-				$this->deletion_reason = strip_tags($reason);
-				$this->deleted_by = $deleter > 0 ? $deleter : $tnh->userObj->id;
-				$this->deleted_on = 'now()';
-				$this->save();
+				if (in_array('deletion_reason', $klass::$fields)) {
+					$this->deletion_reason = str_replace('[username]', $this->creator()->username, $reason);
+				}
+				if (in_array('deleted_by', $klass::$fields)) {
+					$this->deleted_by = $deleter > 0 ? $deleter : $tnh->userObj->id;
+					$this->deleted_on = 'now()';
+				}
+				$res = $this->save();
+				if ($res !== true) return $res;
+				
+				er("got to here");
+				// send message about deletion (if present):
+				if ($reason && $sendPM) {
+					
+					$creator = $this->creator();
+					$deletionPM = new pms(array('sender_user_id' => $tnh->userObj->id,
+												'recipient_user_id' => $creator->id,
+												'subject' => _("Content Deleted"),
+												'message' => $this->deletion_reason
+										 ));
+					er("pm:" . print_r($deletionPM,true));
+					$deletionPM->send();
+				}
 				
 			} else {
 				$sql = "delete from " . $this->table() . " where id = " . $this->id;
 				$res = tep_db_query($sql);
 			}
+			
 			if ($GLOBALS['USE_MEMCACHED'] === true) {
 				try {
 					$memcache->delete($klass . '#' . $this->id);
-				} catch (Exception $me) {}
+				} catch (MemCachedException $me) {
+					error_log("unable to delete from memcached: " . $me->errorMessage());
+				}
 			}
+			
 			$this->data = array();
 			return true;
 
@@ -372,60 +481,202 @@ abstract class nhdb {
 
 		return false;
 	}
+
+	/**
+	 * Function to undo a soft delete
+	 * @param integer $restored_by
+	 * @param string $reason
+	 * @return boolean
+	 */
+	function restore($restored_by = 0, $reason = '') {
+		$klass = get_class($this);
+		global $memcache, $tnh;
+		er("in delete");
+		if ($this->id) {
+
+
+			if (in_array('deleted',$klass::$fields)) {
+
+				$this->deleted = '0';
+
+				$this->restored_reason = str_replace('[username]', $this->creator()->username, strip_tags($reason));
+				$this->restored_by = $restored_by > 0 ? $restored_by : $tnh->userObj->id;
+				$this->restored_on = 'now()';
+				if ($this->save() !== true) return false;
+
+				// send message about restoration (if present):
+				if ($this->restored_reason) {
+					$RestoredPM = new pms(array('sender_user_id' => $tnh->userObj->id,
+												'recipient_user_id' => $this->creator()->id,
+												'subject' => _("Content Restored"),
+												'message' => $this->restored_reason
+										 ));
+					er("pm:" . print_r($RestoredPM,true));
+					$RestoredPM->send();
+				}
+			} else return false;
+
+			return true;
+		}
+
+		return false;
+	}
+
 	
-	public static function retrieve_many_for_fk($fk_value_ary, $results_wanted, $offset) {
-		$keys = array_keys($fk_value_ary);
-		$values = array_values($fk_value_ary);
+	/**
+	 * Function to fetch multiple objects by SQL. The statement should return the ids of the object class you wish returned.
+	 * @param string $sql
+	 * @param string|integer $results_wanted
+	 * @param integer $offset
+	 * @return array of objects, integer 
+	 */
+	public static function fetch_many_by_sql($sql, $results_wanted = 'all', $offset = 0) {
+		$klass = get_called_class();
 		
-		er("values: " . print_r($values,true));
-		$sql = sprintf("select id from %s where %s = '%d'", self::$table, $keys[0], $values[0]);
-		er("sql: $sql\n");
+		
 		$res = tep_db_query($sql);
-		$ids = array();
-		while ($row = tep_db_fetch_array($res)	) {
-			$ids[] = $row['id'];
-		}
-		$rows = sizeof($ids);
-		if ($results_wanted == 'all') {
-			$results_wanted = $rows;
-		}
-		
 		$results = array();
-		foreach (array_slice($ids, $offset, $results_wanted) as $id) {
-			$klasss = self::$klass;
-			$object = $klasss::load($id);
-			$results[] = $object;
+		while ($row = tep_db_fetch_array($res)) {
+			$results[] = $row;
 		}
-		
-		return array($results, $rows);	
+		tep_db_free_result($res);
+		$rows = sizeof($results);
+		if ($results_wanted != 'all') {
+			$wanted_results = array_slice($results, $offset, $results_wanted);
+		} else {
+			$wanted_results = $results;
+		}
+		$objs = array();
+		//er("wr: " . print_r($wanted_results,true));
+		foreach ($wanted_results as $wr) {
+			$g = $klass::load($wr['id']);
+			if ($g) {
+				$objs[] = $g;
+			}
+
+
+		}
+		return array($objs, $rows);
+	
 	}
 	
-	public static function fetch_where($where_array, $results_wanted = 'all', $offset = 0, $orderby = '', $direction = 'asc', $city_id = null) {
+	
+	/**
+	 * Function to return a http link to this instance
+	 * @return string
+	 */
+	public function internalLink() {
+		error_log("internalLink not defined in " . get_called_class());
+		return '';
+	}
+
+	
+	/**
+	 * Returns the count of rows returned from the where clause specified.
+	 * @param unknown_type $where_array_or_string
+	 * @param unknown_type $results_wanted
+	 * @param unknown_type $offset
+	 * @param unknown_type $orderby
+	 * @param unknown_type $direction
+	 * @param unknown_type $city_id
+	 * @return Ambiguous
+	 */
+	public static function count_where($where_array_or_string, $results_wanted = 'all', $offset = 0, $orderby = '', $direction = 'asc', $city_id = null) {
 		if (!$city_id) {
 			$city_id = $GLOBALS['city_id'];
 		}
 		$klass = get_called_class();
-		$sql = sprintf("select id from %s", $klass::$table);
+		$sql = "select count(id) as total from {$klass::$table}";
+		
 		// do where clause
-		$pairArray = array();
-		foreach ($where_array as $field => $value) {
-			if (in_array($field, $klass::$fields)) {
-				$pairArray[] = "$field = '" . tep_esc($value) . "'";
+		if (is_array($where_array_or_string)) $where_array = $where_array_or_string;
+		elseif (is_string($where_array_or_string)) $where = ' WHERE '.$where_array_or_string;
+		
+		$wherePieces = array();
+		if (@$where_array) {
+			foreach ($where_array as $field => $value) {
+				if (in_array($field, $klass::$fields)) {
+					$wherePieces[] = "$field = '" . tep_esc($value) . "'";
+				}
+			}
+			$where = " WHERE ";
+			if ($wherePieces) {
+				$where .= implode(' AND ', $wherePieces);
+			} else {
+				$where .= "1 = 1";
 			}
 		}
-		$sql .= " WHERE ";
-		if ($pairArray) {
-			$sql .= explode(' AND ', $pairArray); 
-		} else {
-			$sql .= "1 = 1";
-		}
+		$sql .= $where;
 		if ($city_id && in_array('city_id', $klass::$fields) && is_numeric($city_id)) {
 			$sql .= " AND city_id = $city_id";
 		}
 		if ($orderby && in_array($orderby, $klass::$fields)) {
 			$sql .= " ORDER BY $orderby $direction";
 		}
-		er("sql: $sql\n");
+		$res = tep_db_query($sql);
+		$row = tep_db_fetch_array($res);
+		return $row['total'];
+	}
+
+
+
+
+	public static function fetch_where($where_array_or_string, $results_wanted = 'all', $offset = 0, $orderby = '', $direction = 'asc', $city_id = null) {
+		if ($city_id == null) {
+			$city_id = @$GLOBALS['city_id'];
+		}
+		$klass = get_called_class();
+		$sql = "select id from {$klass::$table}";
+		// do where clause
+		$where_array = array();
+		if (!$where_array_or_string ) {
+			$where_array_or_string = '1 = 1';
+		}
+		if (is_array($where_array_or_string)) {
+			$where_array = $where_array_or_string;
+		} elseif (is_string($where_array_or_string)) {
+			$where = ' WHERE '.$where_array_or_string;
+		} else {
+			$where = ' WHERE 1=1';
+		}
+		
+		$wherePieces = array();
+		if ($where_array) {
+			foreach ($where_array as $field => $value) {
+				if (in_array($field, $klass::$fields)) {
+					if (is_array($value)) {
+						$wherePieces[] = "$field IN ('" . implode("','", $value) . "')";
+					} else {
+						if (in_array(substr($value,0,1),array('>','<','!'))) {
+							$operator = substr($value,0,1);
+							if ($operator == '!') {
+								$operator = '!=';
+							}
+							$value = ltrim($value,'><!');
+						} else {
+							$operator = '=';
+						}
+						$wherePieces[] = "$field " . $operator .  " '" . tep_esc($value) . "'";
+					}
+				}
+			}
+			$where = ' WHERE ';
+			if ($wherePieces) {
+				$where .= implode(' AND ', $wherePieces);
+			} else {
+				$where .= '1 = 1';
+			}
+		}
+		$sql .= $where;
+		if ($city_id && in_array('city_id', $klass::$fields) && is_numeric($city_id)) {
+			$sql .= " AND city_id = $city_id";
+		}
+		if (in_array('deleted', $klass::$fields) && !isset($klass::$include_deleted_in_fetch)) {
+			$sql .= " AND deleted != '1'";
+		}
+		if ($orderby && in_array($orderby, $klass::$fields)) {
+			$sql .= " ORDER BY $orderby $direction";
+		}
 		$res = tep_db_query($sql);
 		$ids = array();
 		while ($row = tep_db_fetch_array($res)	) {
@@ -435,17 +686,16 @@ abstract class nhdb {
 		if ($results_wanted == 'all') {
 			$results_wanted = $rows;
 		}
-		
+
 		$results = array();
 		foreach (array_slice($ids, $offset, $results_wanted) as $id) {
-			
-			$object = $klass::load($id);
-			$results[] = $object;
+			if ($object = $klass::load($id)) {
+				$results[] = $object;
+			}
 		}
-		
-		return array($results, $rows);		
+		return array($results, $rows);
 	}
-	
+
 	public static function fetch_all($results_wanted = 'all', $offset = 0, $orderby = '', $direction = 'asc', $city_id = null) {
 		$klass = get_called_class();
 		return $klass::fetch_where(null, $results_wanted, $offset, $orderby, $direction, $city_id);
@@ -456,45 +706,78 @@ abstract class nhdb {
 		$klass = get_class($this);
 		$foreign_class = $klass::$fks_classes[$fk_name];
 		if (!$foreign_class) {
-			throw new Exception("Could not find class for foreign key $fk_name");
+			throw new TNHException("Could not find class for foreign key $fk_name");
 		}
 		$obj = $foreign_class::load($this->$fk_name);
 		return $obj;
 	}
-	
+
 	public function update_attributes($args) {
 		$klass = get_class($this);
 		foreach ($klass::$fields as $f) {
 			if ($f != 'id' && in_array($f, array_keys($args))) {
-				$this->$f = str_replace("\\r\\n", "\n", tep_esc($args[$f]));
+				$this->$f = str_replace("\\r\\n", "\n", $args[$f]);
 			}
 		}
 	}
+	/**
+	 * returns a user object corresponding to the user who created this object
+	 * @return user
+	 */
 	public function creator() {
 		if (!$this->creator) {
-			$u = new user(array('id' => $this->created_by));
-			$u->retrieve();
-			$this->creator = $u;
+			$uid = ($this->created_by) ? $this->created_by : @$this->user_id;
+			if ($u = user::load($uid)) {
+				$this->creator = $u;
+			}
 		}
 		return $this->creator;
 	}
 
+	/**
+	 * Returns a user object corresponding to the user who updated this object
+	 * @return user
+	 */
 	public function updater() {
 		if (!$this->updater) {
-			$u = new user(array('id' => $this->updated_by));
-			$u->retrieve();
-			$this->updater = $u;
+			$u = user::load($this->updated_by);
+			if ($u) {
+				$this->updater = $u;
+			}
 		}
 		return $this->updater;
 	}
 	
+	/**
+	 * returns the iso601 language code (2) of the original language of this object (or 'en' if unknown)
+	 * @return iso601(2) string
+	 */
+	public function canonicalLang() {
+		$lang = '';
+		
+		global $langs_accepted;
+		
+		if ($this->creator() && $this->creator()->primary_lang) {
+			$lang = $langs_accepted[$this->creator()->primary_lang];
+		}
+		if (!$lang) {
+			$lang = 'en';
+		}
+		
+		return $lang;
+	}
+
+	/**
+	 * Returns a user object corresponding to the user who modified this object
+	 * @return user
+	 */
 	public function modifier() {
 		if (!$this->modifier) {
 			$this->modifier = user::load($this->modified_by);
 		}
 		return $this->modifier;
 	}
-	
+
 	/* crazy workaround for the fact that 'self' does not follow inherited context in PHP < 5.3 */
 	// FIXME not needed any more??
 	protected function table() {
@@ -504,12 +787,6 @@ abstract class nhdb {
 
 
 
-
-	public function populateObject() {
-		return true;
-	}
-
-	
 	public function setTranslation($lang, $field, $value) {
 		$klass = get_class($this);
 		$this->prepare_translations();
@@ -533,7 +810,7 @@ abstract class nhdb {
 		return true;
 	}
 
-	
+
 
     public function setUpTranslations($langCode = 'en_US') {
 
@@ -556,27 +833,297 @@ abstract class nhdb {
 		}
 		return $selfArray;
 	}
-	
+
 	/* need this because php < 5.3 doesn't garbage collect circular references */
     public function __destruct() {
+    	/*
         foreach ($this as $index => $value) {
 			if (is_object($this->$index)) {
 				$this->$index->__destruct();
 			}
 			unset($this->$index);
 		}
+		*/
     }
 
 
 
+	/**
+	 * performs validation on the members of the object and returns errors or true
+	 * @return boolean|string
+	 */
 	public function validate() {
 		er("please install validation for " . get_class($this) . "\n");
 		return true;
 	}
 
 
+	/* Sync Functions - Not ready for OSS yet */
 
 
+	public static function sync($lastSyncTimeServer, $offset, $userObj, $devicePayload = array(), $predicate = '', $sql = '') {
+		/*
+		 server = device + offset;
+		 device = server - offset 
+		*/
+		
+		$res = tep_db_query("select now()");
+		$row = tep_db_fetch_array($res);
+		//er("mysql time:" . print_r($row,true));
+		error_log("last sync server:" . date("Y-m-d H:i:s", $lastSyncTimeServer) . "\n", 3, ERROR_LOG);
+		error_log("offset: $offset\n", 3, ERROR_LOG);
+		$klass = get_called_class();
+		
+		$changedDevObjs = $deletedDevObjs = $newDevObjs = array();
+		if (is_array($devicePayload))  {
+			foreach ($devicePayload as $deviceObject) {
+				if (!is_object($deviceObject)) {
+					$deviceObject = arrayToObject($deviceObject);
+				}
+				//error_log("deviceObject: " . print_r($deviceObject, true), 3, ERROR_LOG);
+				if ((isset($deviceObject->deleted) && $deviceObject->deleted == 1) || (isset($deviceObject->status_code) && $deviceObject->status_code == 10)) {
+					//er("this is a deleted $klass");
+					if (!$deviceObject->web_id || $deviceObject->web_id <= 0) {
+						// get the id
+						er("deleted: web_id is 0 or not set. looking for corresponding object by guid");
+						$potentialObj = $klass::load($deviceObject->device_guid);
+						if ($potentialObj->id) {
+							//er("deleted: loaded successfully");
+							//er("deleted: potential obj:" . print_r($potentialObj,true));
+							$deviceObject->id = $potentialObj->id;
+							//er("dev id: " . $deviceObject->id . " - adding to deletedDevObjs");
+							$deletedDevObjs[] = $deviceObject;
+						} else {
+							er("deleted: could not find corresponding object for guid " . $deviceObject->device_guid);
+							//nothing. it's not on the web so we just throw it out.
+						}
+					} else {
+						//er("deleted obj has web_id");
+						$deletedDevObjs[] = $deviceObject;
+					}
+				
+				} elseif ((isset($deviceObject->web_id) && intval($deviceObject->web_id) > 0)
+							|| (isset($deviceObject->id) && intval($deviceObject->id) > 0) 
+							) {
+					
+					$changedDevObjs[] = $deviceObject;
+				} else {
+					if ($deviceObject->device_guid) {
+						// load via guid
+						//er("else: loading via guid");
+						$potentialObj = $klass::load($deviceObject->device_guid);
+						if (intval($potentialObj->id) > 0) {
+							//er("else: loaded successfully. pot obj is:" . print_r($potentialObj,true));
+							$deviceObject->id = $potentialObj->id;
+							//er("else: dev id: " . $deviceObject->id);
+							$changedDevObjs[] = $deviceObject;
+						} else {
+							//er("failed to look up object; adding to new objs");
+							$newDevObjs[] = $deviceObject;
+						}
+					} else {
+						// the rest we assume are new
+						$newDevObjs[] = $deviceObject;
+					}
+				}
+			}
+		}
+		
+
+		
+		/* apply deletions */
+		//er("deleted Objects:" . print_r($deletedDevObjs,true));
+		foreach ($deletedDevObjs as $deletedDevObj) {
+			$deletedDevObj->id = $deletedDevObj->web_id;
+			$deletedCastObj = new $klass(objectToArray($deletedDevObj));
+			//error_log("cast object: " . print_r($deletedCastObj,true), 3, ERROR_LOG);
+			if ($userObj->can_delete($deletedCastObj)) {
+				//er("deleting object: " . print_r($deletedCastObj,true));
+				//$deletedCastObj->id = $deletedDevObj->web_id;
+				$deletedCastObj->delete($userObj->id, "deleted on mobile device");
+			}
+		}
+		unset($deletedDevObjs, $deletedCastObj, $deletedDevObj);
+		
+		/* do changes - this is in a separate method so it can be overridden */
+		$klass::sync_changes($changedDevObjs, $offset, $userObj, $klass);
+
+		/* add new objects */
+		$klass::sync_additions($newDevObjs, $offset, $userObj, $klass);
+
+		$returnObjs = $klass::sync_return($lastSyncTimeServer, $offset, $sql, $predicate, $klass);
+		
+		//er("klass is $klass");
+		//error_log("return objs: " . print_r($returnObjs,true), 3, ERROR_LOG);
+		return $returnObjs;
+			
+	}
+	
+	
+	public static function sync_changes($changedDevObjs, $offset, $userObj, $klass) {
+		
+		/* apply changes */
+		//er("in sync_changes; klass is $klass");
+		foreach ($changedDevObjs as $changedDevObj) {
+			$serverComparisonObj = '';
+			$realId = (isset($changedDevObj->web_id)) ? $changedDevObj->web_id : $changedDevObj->id;
+			if (!$realId) {
+				$realId = $changedDevObj->device_guid;
+			}
+			$serverComparisonObj = $klass::load($realId);
+			if (is_object($serverComparisonObj)) {
+				if ($userObj->can_change($serverComparisonObj)) {
+					//er("timezone is: " . date_default_timezone_get());
+					//er("cdo modified: " . $changedDevObj->modified_on . " comparison mod: " . (strtotime($serverComparisonObj->modified_on) - $offset) . " in english:" . $serverComparisonObj->modified_on);
+					if ($changedDevObj->modified_on >= (strtotime($serverComparisonObj->modified_on . ' UTC') - $offset)) {
+						$updateArray = objectToArray($changedDevObj);
+						$serverComparisonObj->update_attributes_mobile($updateArray, $offset);
+						//er("server comparison obj is:" . print_r($serverComparisonObj,true));
+						$serverComparisonObj->save();
+						//$changedCastObj = new $klass(objectToArray($changedDevObj));
+						//$changedCastObj->save();
+					}
+				} else {
+					error_log(sprintf("user %s not allowed to edit object:", $userObj->username) . print_r($serverComparisonObj,true), 3, ERROR_LOG);
+				}
+			} else {
+				er("unable to load object of class $klass using id $realId");
+			}
+		}
+		unset($changedDevObjs, $changedDevObj, $serverComparisonObj);
+	}
+	
+	public static function sync_additions($newDevObjs, $offset, $userObj, $klass) {
+		if ($userObj->can_create($klass)) {
+			foreach ($newDevObjs as $newDevObj) {
+				$newDevObj->created_on = $newDevObj->modified_on;
+				
+				$newObj = new $klass();
+				$newObj->update_attributes_mobile(objectToArray($newDevObj), $offset);
+				//er(print_r($newObj,true));
+				$newObj->modified_on = 'now()';
+				$result = $newObj->save();
+				if ($result !== true) {
+					error_log("error while saving new $klass from device: " . print_r($result,true) . "\n", 3, ERROR_LOG);
+				}
+				unset($result);
+			}
+		}
+		unset($newDevObjs, $newDevObj, $newObj);
+	}
+	
+	public static function sync_return($lastSyncTimeServer, $offset, $sql = '', $predicate = '', $klass) {
+		/* get objects to return */
+		if (!$sql) {
+			$sql = sprintf("select id from %s where %s >= '%s'", $klass::$table, in_array('modified_on', $klass::$fields) ? 'modified_on' : 'created_on', date('Y-m-d H:i:s', $lastSyncTimeServer));
+			if ($predicate) {
+				$sql .= " and $predicate";
+			}
+		}
+		$res = tep_db_query($sql);
+		$returnObjs = array();
+		while ($row = tep_db_fetch_array($res)) {
+			$returnObjs[] = $klass::load($row['id'])->getData();
+		}
+		//er("return objects (before adjustment): " . print_r($returnObjs,true));
+		unset($res, $sql, $row);
+		return $klass::adjust_for_return_to_device($returnObjs, $offset);
+	}
+	
+	public static function adjust_for_return_to_device($aryArgAry, $offset) {
+		$returnAry = array();
+		foreach ($aryArgAry as $argAry) {
+			foreach ($argAry as $key => $val) {
+				if ($val && !is_numeric($val)) {
+					$argAry[$key] = stripslashes($val);
+				}
+			}
+			
+			$argAry['modified_on'] = (strtotime(@$argAry['modified_on']) - $offset);
+			if (isset($argAry['id']) && !isset($argAry['web_id'])) {
+				$argAry['web_id'] = $argAry['id'];
+			}
+			foreach (array('created_on') 
+							as $theDateField) {
+				if (array_key_exists($theDateField, $argAry)) {
+					if ($argAry[$theDateField] > 0) {
+						$argAry[$theDateField] = strtotime($argAry[$theDateField]);
+					} else {
+						$argAry[$theDateField] = -1;
+					}
+				}
+			}
+			$argAry['pkey'] = ""; //IMPORTANT - leave this here or the device crashes
+			unset($argAry['id']);
+			$returnAry[] = $argAry;
+		}
+		unset ($aryArgAry, $argAry);
+		return $returnAry;
+	}
+
+	
+	public function update_attributes_mobile($args, $offset) {
+		// need to apply offset and translate dates to mysql format
+		/* device = server - offset */
+		/* server = device + offset */
+		$klass = get_class($this);
+		//("in update atts mobile. klass is $klass");
+		foreach ($klass::$fields as $f) {
+			
+			if ($f != 'id' && in_array($f, array_keys($args))) {
+			
+				$newVal = $args[$f];
+				//er("f is $f");
+				if (in_array($f, nhdb::$datefields)) { 
+					//apply skew
+					//er("$f is a date field");
+					$newVal = $newVal + $offset;
+					// convert to mysql
+					$newVal = date("Y-m-d H:i:s", $newVal);
+					//er("new date is $newVal");
+					$this->$f = $newVal;
+					//er("this after new dates:" . print_r($this,true));
+				} else if ( in_array($f, nhdb::$dateFieldsConstant)) {
+					$newVal = date("Y-m-d H:i:s", $newVal);
+					//er("new date is $newVal");
+					$this->$f = $newVal;
+					
+				} elseif (is_string($newVal)) {
+					$this->$f = str_replace("\\r\\n", "\n", tep_esc($newVal));
+				} else {
+					$this->$f = $newVal;
+				}
+				if ($f == 'spec_section_id') {
+					if ($args[$f] <= 0) {
+						$this->$f = 'null';
+					}
+				}
+			}
+			
+		}
+		if (in_array('project_id', $klass::$fields)) {
+			$this->project_id = $GLOBALS['project_id'];
+		}
+	}
+
+	/**
+	 * returns the age of this object in months (intervals of 30 days, actually)
+	 * @return boolean|number
+	 */
+	public function age_in_months() {
+		$klass = get_called_class();
+		if (in_array('created_on', $klass::$fields)) {
+			$date = $this->created_on;
+		} else if (in_array('created', $klass::$fields)) {
+			$date = $this->created;
+		} else {
+			return false;
+		}
+		
+		$daysOld = (time()  - strtotime($date)) / (60*60*24);
+		//er("days old: $daysOld");
+		return ($daysOld / 30);
+	}
 
 
 
