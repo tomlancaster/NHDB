@@ -28,10 +28,13 @@ require_once(DIR_FS_FUNCTIONS . 'database.php');
 
 
 function __autoload($className) {
-	if (file_exists(DIR_FS_CLASSES . $className . '.php')) {
-		require_once(DIR_FS_CLASSES . $className . '.php');
+	$classWithDir = preg_replace('/\/', DIRECTORY_SEPARATOR, $className);
+	if (file_exists(DIR_FS_CLASSES . $classWithDir . '.php')) {
+		require_once(DIR_FS_CLASSES . $classWithDir . '.php');
+	} else if (file_exists(DIR_FS_SYSTEM . $classWithDir . '.php')) {
+		require_once(DIR_FS_SYSTEM . $classWithDir . '.php');
 	} else {
-		error_log("AUTOLOAD: file $className.php does not exist\n", 3, ERROR_LOG);
+		error_log(sprintf("AUTOLOAD: file $classWithDir.php does not exist in in %s or %s\n", DIR_FS_CLASSES, DIR_FS_SYSTEM), 3, ERROR_LOG);
 	}
 }
 
