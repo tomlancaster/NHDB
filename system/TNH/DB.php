@@ -166,7 +166,7 @@ abstract class DB {
 				$this->translated_fields[$member]->set($GLOBALS['lang'],$value);
 			} else {
 				//er("making new tc, even though we don't have an id yet\n", 3, er);
-				$this->translated_fields[$member] = new translation_collection($this->table(), $member,$this->id);
+				$this->translated_fields[$member] = new Translation_Collection($this->table(), $member,$this->id);
 				$this->translated_fields[$member]->set($GLOBALS['lang'],$value);
 			}
 		}
@@ -837,7 +837,7 @@ abstract class DB {
 	public function prepare_translations() {
 		$klass = get_class($this);
 		foreach (array_keys($this->translated_fields) as $tf) {
-			$this->translated_fields[$tf] = new translation_collection($klass::$table, $tf, $this->id);
+			$this->translated_fields[$tf] = new Translation_Collection($klass::$table, $tf, $this->id);
 		}
 		return true;
 	}
@@ -847,7 +847,7 @@ abstract class DB {
     public function setUpTranslations($langCode = 'en_US') {
 
 		foreach ($this->translated_fields as $k => $v) {
-			$trans = new translation(array('original_table' => $this->table(),
+			$trans = new Translation(array('original_table' => $this->table(),
 										   'original_column' => $k,
 										   'original_id' => $this->id,
 										   'language_code' => $langCode,
